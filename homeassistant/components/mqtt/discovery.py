@@ -56,6 +56,7 @@ SUPPORTED_COMPONENTS = [
     "switch",
     "tag",
     "vacuum",
+    "water_heater",
 ]
 
 ALREADY_DISCOVERED = "mqtt_discovered_components"

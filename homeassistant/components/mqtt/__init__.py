@@ -153,6 +153,7 @@ PLATFORMS = [
     Platform.SIREN,
     Platform.SWITCH,
     Platform.VACUUM,
+    Platform.WATER_HEATER,
 ]
 
 

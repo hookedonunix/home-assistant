@@ -23,6 +23,7 @@ from homeassistant.components import (
     sensor,
     switch,
     vacuum,
+    water_heater,
 )
 from homeassistant.components.climate import const as climate
 from homeassistant.components.humidifier import const as humidifier
@@ -774,14 +775,10 @@ class StartStopTrait(_Trait):
         """Execute a StartStop command."""
         if command == COMMAND_STARTSTOP:
             if params["start"] is False:
-                if (
-                    self.state.state
-                    in (
-                        cover.STATE_CLOSING,
-                        cover.STATE_OPENING,
-                    )
-                    or self.state.attributes.get(ATTR_ASSUMED_STATE)
-                ):
+                if self.state.state in (
+                    cover.STATE_CLOSING,
+                    cover.STATE_OPENING,
+                ) or self.state.attributes.get(ATTR_ASSUMED_STATE):
                     await self.hass.services.async_call(
                         self.state.domain,
                         cover.SERVICE_STOP_COVER,
@@ -818,10 +815,24 @@ class TemperatureControlTrait(_Trait):
         return (
             domain == sensor.DOMAIN
             and device_class == sensor.SensorDeviceClass.TEMPERATURE
-        )
+        ) or (domain == water_heater.DOMAIN)
 
     def sync_attributes(self):
         """Return temperature attributes for a sync request."""
+        domain = self.state.domain
+        attrs = self.state.attributes
+
+        if domain == water_heater.DOMAIN:
+            return {
+                "temperatureUnitForUX": _google_temp_unit(
+                    self.hass.config.units.temperature_unit
+                ),
+                "temperatureRange": {
+                    "minThresholdCelsius": attrs[water_heater.ATTR_MIN_TEMP],
+                    "maxThresholdCelsius": attrs[water_heater.ATTR_MAX_TEMP],
+                },
+            }
+
         return {
             "temperatureUnitForUX": _google_temp_unit(
                 self.hass.config.units.temperature_unit
@@ -846,8 +857,35 @@ class TemperatureControlTrait(_Trait):
         return response
 
     async def execute(self, command, data, params, challenge):
-        """Unsupported."""
-        raise SmartHomeError(ERR_NOT_SUPPORTED, "Execute is not supported by sensor")
+        """Execute a temperature point or mode command."""
+        # All sent in temperatures are always in Celsius
+        domain = self.state.domain
+
+        if domain == water_heater.DOMAIN:
+            unit = self.hass.config.units.temperature_unit
+            min_temp = self.state.attributes[water_heater.ATTR_MIN_TEMP]
+            max_temp = self.state.attributes[water_heater.ATTR_MAX_TEMP]
+
+            if command == COMMAND_THERMOSTAT_TEMPERATURE_SETPOINT:
+                temp = temp_util.convert(
+                    params["thermostatTemperatureSetpoint"], TEMP_CELSIUS, unit
+                )
+                if unit == TEMP_FAHRENHEIT:
+                    temp = round(temp)
+
+                if temp < min_temp or temp > max_temp:
+                    raise SmartHomeError(
+                        ERR_VALUE_OUT_OF_RANGE,
+                        f"Temperature should be between {min_temp} and {max_temp}",
+                    )
+
+                await self.hass.services.async_call(
+                    water_heater.DOMAIN,
+                    climate.SERVICE_SET_TEMPERATURE,
+                    {ATTR_ENTITY_ID: self.state.entity_id, ATTR_TEMPERATURE: temp},
+                    blocking=not self.config.should_report_state,
+                    context=data.context,
+                )
 
 
 @register_trait
