@@ -57,8 +57,6 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_NAME = "MQTT WATER HEATER"
 
-_LOGGER.critical("CAN YOU FUCKING SEE THIS?")
-
 CONF_AWAY_MODE_COMMAND_TOPIC = "away_mode_command_topic"
 CONF_AWAY_MODE_STATE_TEMPLATE = "away_mode_state_template"
 CONF_AWAY_MODE_STATE_TOPIC = "away_mode_state_topic"
@@ -413,7 +411,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         def handle_current_temperature_received(msg):
             """Handle current temperature coming via MQTT."""
             handle_temperature_received(
-                msg, CONF_CURRENT_TEMP_TEMPLATE, "_current_temp"
+                msg, CONF_CURRENT_TEMP_TEMPLATE, "_attr_current_temperature"
             )
 
         add_subscription(
@@ -424,7 +422,9 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         @log_messages(self.hass, self.entity_id)
         def handle_target_temperature_received(msg):
             """Handle target temperature coming via MQTT."""
-            handle_temperature_received(msg, CONF_TEMP_STATE_TEMPLATE, "_target_temp")
+            handle_temperature_received(
+                msg, CONF_TEMP_STATE_TEMPLATE, "_attr_target_temperature"
+            )
 
         add_subscription(
             topics, CONF_TEMP_STATE_TOPIC, handle_target_temperature_received
@@ -435,7 +435,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         def handle_temperature_low_received(msg):
             """Handle target temperature low coming via MQTT."""
             handle_temperature_received(
-                msg, CONF_TEMP_LOW_STATE_TEMPLATE, "_target_temp_low"
+                msg, CONF_TEMP_LOW_STATE_TEMPLATE, "_attr_target_temperature_low"
             )
 
         add_subscription(
@@ -447,7 +447,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         def handle_temperature_high_received(msg):
             """Handle target temperature high coming via MQTT."""
             handle_temperature_received(
-                msg, CONF_TEMP_HIGH_STATE_TEMPLATE, "_target_temp_high"
+                msg, CONF_TEMP_HIGH_STATE_TEMPLATE, "_attr_target_temperature_high"
             )
 
         add_subscription(
@@ -470,7 +470,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         def handle_current_mode_received(msg):
             """Handle receiving mode via MQTT."""
             handle_mode_received(
-                msg, CONF_MODE_STATE_TEMPLATE, "_current_operation", CONF_MODE_LIST
+                msg, CONF_MODE_STATE_TEMPLATE, "_attr_current_operation", CONF_MODE_LIST
             )
 
         add_subscription(topics, CONF_MODE_STATE_TOPIC, handle_current_mode_received)
@@ -500,7 +500,9 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         @log_messages(self.hass, self.entity_id)
         def handle_away_mode_received(msg):
             """Handle receiving away mode via MQTT."""
-            handle_onoff_mode_received(msg, CONF_AWAY_MODE_STATE_TEMPLATE, "_away")
+            handle_onoff_mode_received(
+                msg, CONF_AWAY_MODE_STATE_TEMPLATE, "_attr_is_away_mode_on"
+            )
 
         add_subscription(topics, CONF_AWAY_MODE_STATE_TOPIC, handle_away_mode_received)
 
@@ -572,7 +574,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
             CONF_TEMP_COMMAND_TOPIC,
             CONF_TEMP_COMMAND_TEMPLATE,
             CONF_TEMP_STATE_TOPIC,
-            "_target_temp",
+            "_attr_target_temperature",
         )
 
         await self._set_temperature(
@@ -580,7 +582,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
             CONF_TEMP_LOW_COMMAND_TOPIC,
             CONF_TEMP_LOW_COMMAND_TEMPLATE,
             CONF_TEMP_LOW_STATE_TOPIC,
-            "_target_temp_low",
+            "_attr_target_temperature_low",
         )
 
         await self._set_temperature(
@@ -588,7 +590,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
             CONF_TEMP_HIGH_COMMAND_TOPIC,
             CONF_TEMP_HIGH_COMMAND_TEMPLATE,
             CONF_TEMP_HIGH_STATE_TOPIC,
-            "_target_temp_high",
+            "_attr_target_temperature_high",
         )
 
         # Always optimistic?

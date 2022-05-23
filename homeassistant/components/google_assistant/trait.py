@@ -129,6 +129,7 @@ COMMAND_THERMOSTAT_TEMPERATURE_SET_RANGE = (
     f"{PREFIX_COMMANDS}ThermostatTemperatureSetRange"
 )
 COMMAND_THERMOSTAT_SET_MODE = f"{PREFIX_COMMANDS}ThermostatSetMode"
+COMMAND_WATERHEATER_SET_TEMPERATURE = f"{PREFIX_COMMANDS}SetTemperature"
 COMMAND_LOCKUNLOCK = f"{PREFIX_COMMANDS}LockUnlock"
 COMMAND_FANSPEED = f"{PREFIX_COMMANDS}SetFanSpeed"
 COMMAND_FANSPEEDRELATIVE = f"{PREFIX_COMMANDS}SetFanSpeedRelative"
@@ -333,6 +334,7 @@ class OnOffTrait(_Trait):
             light.DOMAIN,
             media_player.DOMAIN,
             humidifier.DOMAIN,
+            water_heater.DOMAIN,
         )
 
     def sync_attributes(self):
@@ -809,6 +811,10 @@ class TemperatureControlTrait(_Trait):
 
     name = TRAIT_TEMPERATURE_CONTROL
 
+    commands = [
+        COMMAND_WATERHEATER_SET_TEMPERATURE,
+    ]
+
     @staticmethod
     def supported(domain, features, device_class, _):
         """Test if state is supported."""
@@ -846,15 +852,35 @@ class TemperatureControlTrait(_Trait):
 
     def query_attributes(self):
         """Return temperature states."""
-        response = {}
         unit = self.hass.config.units.temperature_unit
+        domain = self.state.domain
+        attrs = self.state.attributes
+
+        if domain == water_heater.DOMAIN:
+            target_temp = round(
+                temp_util.convert(float(attrs["temperature"] or 0), unit, TEMP_CELSIUS),
+                1,
+            )
+            current_temp = round(
+                temp_util.convert(
+                    float(attrs["current_temperature"] or 0), unit, TEMP_CELSIUS
+                ),
+                1,
+            )
+            return {
+                "temperatureSetpointCelsius": target_temp,
+                "temperatureAmbientCelsius": current_temp,
+            }
+
         current_temp = self.state.state
         if current_temp not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
             temp = round(temp_util.convert(float(current_temp), unit, TEMP_CELSIUS), 1)
-            response["temperatureSetpointCelsius"] = temp
-            response["temperatureAmbientCelsius"] = temp
+            return {
+                "temperatureSetpointCelsius": temp,
+                "temperatureAmbientCelsius": temp,
+            }
 
-        return response
+        return {}
 
     async def execute(self, command, data, params, challenge):
         """Execute a temperature point or mode command."""
@@ -866,10 +892,8 @@ class TemperatureControlTrait(_Trait):
             min_temp = self.state.attributes[water_heater.ATTR_MIN_TEMP]
             max_temp = self.state.attributes[water_heater.ATTR_MAX_TEMP]
 
-            if command == COMMAND_THERMOSTAT_TEMPERATURE_SETPOINT:
-                temp = temp_util.convert(
-                    params["thermostatTemperatureSetpoint"], TEMP_CELSIUS, unit
-                )
+            if command == COMMAND_WATERHEATER_SET_TEMPERATURE:
+                temp = temp_util.convert(params["temperature"], TEMP_CELSIUS, unit)
                 if unit == TEMP_FAHRENHEIT:
                     temp = round(temp)
 
@@ -881,7 +905,7 @@ class TemperatureControlTrait(_Trait):
 
                 await self.hass.services.async_call(
                     water_heater.DOMAIN,
-                    climate.SERVICE_SET_TEMPERATURE,
+                    water_heater.SERVICE_SET_TEMPERATURE,
                     {ATTR_ENTITY_ID: self.state.entity_id, ATTR_TEMPERATURE: temp},
                     blocking=not self.config.should_report_state,
                     context=data.context,
