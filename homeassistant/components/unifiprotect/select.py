@@ -6,22 +6,24 @@ from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
 import logging
-from typing import Any, Final, Generic
+from typing import Any, Final
 
 from pyunifiprotect.api import ProtectApiClient
 from pyunifiprotect.data import (
     Camera,
+    ChimeType,
     DoorbellMessageType,
     Doorlock,
     IRLEDMode,
     Light,
     LightModeEnableType,
     LightModeType,
+    MountType,
+    ProtectModelWithId,
     RecordingMode,
     Sensor,
     Viewer,
 )
-from pyunifiprotect.data.types import ChimeType, MountType
 import voluptuous as vol
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
@@ -104,7 +106,7 @@ SET_DOORBELL_LCD_MESSAGE_SCHEMA = vol.Schema(
 
 @dataclass
 class ProtectSelectEntityDescription(
-    ProtectSetableKeysMixin, SelectEntityDescription, Generic[T]
+    ProtectSetableKeysMixin[T], SelectEntityDescription
 ):
     """Describes UniFi Protect Select entity."""
 
@@ -140,7 +142,7 @@ def _get_doorbell_options(api: ProtectApiClient) -> list[dict[str, Any]]:
 def _get_paired_camera_options(api: ProtectApiClient) -> list[dict[str, Any]]:
     options = [{"id": TYPE_EMPTY_VALUE, "name": "Not Paired"}]
     for camera in api.bootstrap.cameras.values():
-        options.append({"id": camera.id, "name": camera.name})
+        options.append({"id": camera.id, "name": camera.name or camera.type})
 
     return options
 
@@ -354,8 +356,8 @@ class ProtectSelects(ProtectDeviceEntity, SelectEntity):
         self._async_set_options()
 
     @callback
-    def _async_update_device_from_protect(self) -> None:
-        super()._async_update_device_from_protect()
+    def _async_update_device_from_protect(self, device: ProtectModelWithId) -> None:
+        super()._async_update_device_from_protect(device)
 
         # entities with categories are not exposed for voice and safe to update dynamically
         if (

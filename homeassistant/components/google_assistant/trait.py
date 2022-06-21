@@ -251,7 +251,7 @@ class BrightnessTrait(_Trait):
         if domain == light.DOMAIN:
             brightness = self.state.attributes.get(light.ATTR_BRIGHTNESS)
             if brightness is not None:
-                response["brightness"] = int(100 * (brightness / 255))
+                response["brightness"] = round(100 * (brightness / 255))
             else:
                 response["brightness"] = 0
 
@@ -2014,7 +2014,7 @@ class VolumeTrait(_Trait):
         level = self.state.attributes.get(media_player.ATTR_MEDIA_VOLUME_LEVEL)
         if level is not None:
             # Convert 0.0-1.0 to 0-100
-            response["currentVolume"] = int(level * 100)
+            response["currentVolume"] = round(level * 100)
 
         muted = self.state.attributes.get(media_player.ATTR_MEDIA_VOLUME_MUTED)
         if muted is not None:

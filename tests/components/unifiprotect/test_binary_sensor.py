@@ -24,7 +24,6 @@ from homeassistant.components.unifiprotect.const import (
 from homeassistant.const import (
     ATTR_ATTRIBUTION,
     ATTR_DEVICE_CLASS,
-    ATTR_LAST_TRIP_TIME,
     STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
@@ -37,6 +36,7 @@ from .conftest import (
     MockEntityFixture,
     assert_entity_counts,
     ids_from_device_description,
+    reset_objects,
 )
 
 
@@ -52,7 +52,7 @@ async def camera_fixture(
     # disable pydantic validation so mocking can happen
     Camera.__config__.validate_assignment = False
 
-    camera_obj = mock_camera.copy(deep=True)
+    camera_obj = mock_camera.copy()
     camera_obj._api = mock_entry.api
     camera_obj.channels[0]._api = mock_entry.api
     camera_obj.channels[1]._api = mock_entry.api
@@ -63,7 +63,7 @@ async def camera_fixture(
     camera_obj.is_dark = False
     camera_obj.is_motion_detected = False
 
-    mock_entry.api.bootstrap.reset_objects()
+    reset_objects(mock_entry.api.bootstrap)
     mock_entry.api.bootstrap.nvr.system_info.storage.devices = []
     mock_entry.api.bootstrap.cameras = {
         camera_obj.id: camera_obj,
@@ -72,7 +72,7 @@ async def camera_fixture(
     await hass.config_entries.async_setup(mock_entry.entry.entry_id)
     await hass.async_block_till_done()
 
-    assert_entity_counts(hass, Platform.BINARY_SENSOR, 3, 3)
+    assert_entity_counts(hass, Platform.BINARY_SENSOR, 9, 9)
 
     yield camera_obj
 
@@ -88,14 +88,14 @@ async def light_fixture(
     # disable pydantic validation so mocking can happen
     Light.__config__.validate_assignment = False
 
-    light_obj = mock_light.copy(deep=True)
+    light_obj = mock_light.copy()
     light_obj._api = mock_entry.api
     light_obj.name = "Test Light"
     light_obj.is_dark = False
     light_obj.is_pir_motion_detected = False
     light_obj.last_motion = now - timedelta(hours=1)
 
-    mock_entry.api.bootstrap.reset_objects()
+    reset_objects(mock_entry.api.bootstrap)
     mock_entry.api.bootstrap.nvr.system_info.storage.devices = []
     mock_entry.api.bootstrap.lights = {
         light_obj.id: light_obj,
@@ -104,7 +104,7 @@ async def light_fixture(
     await hass.config_entries.async_setup(mock_entry.entry.entry_id)
     await hass.async_block_till_done()
 
-    assert_entity_counts(hass, Platform.BINARY_SENSOR, 2, 2)
+    assert_entity_counts(hass, Platform.BINARY_SENSOR, 8, 8)
 
     yield light_obj
 
@@ -120,7 +120,7 @@ async def camera_none_fixture(
     # disable pydantic validation so mocking can happen
     Camera.__config__.validate_assignment = False
 
-    camera_obj = mock_camera.copy(deep=True)
+    camera_obj = mock_camera.copy()
     camera_obj._api = mock_entry.api
     camera_obj.channels[0]._api = mock_entry.api
     camera_obj.channels[1]._api = mock_entry.api
@@ -130,7 +130,7 @@ async def camera_none_fixture(
     camera_obj.is_dark = False
     camera_obj.is_motion_detected = False
 
-    mock_entry.api.bootstrap.reset_objects()
+    reset_objects(mock_entry.api.bootstrap)
     mock_entry.api.bootstrap.nvr.system_info.storage.devices = []
     mock_entry.api.bootstrap.cameras = {
         camera_obj.id: camera_obj,
@@ -139,7 +139,7 @@ async def camera_none_fixture(
     await hass.config_entries.async_setup(mock_entry.entry.entry_id)
     await hass.async_block_till_done()
 
-    assert_entity_counts(hass, Platform.BINARY_SENSOR, 2, 2)
+    assert_entity_counts(hass, Platform.BINARY_SENSOR, 8, 8)
 
     yield camera_obj
 
@@ -158,7 +158,7 @@ async def sensor_fixture(
     # disable pydantic validation so mocking can happen
     Sensor.__config__.validate_assignment = False
 
-    sensor_obj = mock_sensor.copy(deep=True)
+    sensor_obj = mock_sensor.copy()
     sensor_obj._api = mock_entry.api
     sensor_obj.name = "Test Sensor"
     sensor_obj.mount_type = MountType.DOOR
@@ -169,9 +169,9 @@ async def sensor_fixture(
     sensor_obj.motion_detected_at = now - timedelta(hours=1)
     sensor_obj.open_status_changed_at = now - timedelta(hours=1)
     sensor_obj.alarm_triggered_at = now - timedelta(hours=1)
-    sensor_obj.tampering_detected_at = now - timedelta(hours=1)
+    sensor_obj.tampering_detected_at = None
 
-    mock_entry.api.bootstrap.reset_objects()
+    reset_objects(mock_entry.api.bootstrap)
     mock_entry.api.bootstrap.nvr.system_info.storage.devices = []
     mock_entry.api.bootstrap.sensors = {
         sensor_obj.id: sensor_obj,
@@ -180,7 +180,7 @@ async def sensor_fixture(
     await hass.config_entries.async_setup(mock_entry.entry.entry_id)
     await hass.async_block_till_done()
 
-    assert_entity_counts(hass, Platform.BINARY_SENSOR, 4, 4)
+    assert_entity_counts(hass, Platform.BINARY_SENSOR, 10, 10)
 
     yield sensor_obj
 
@@ -199,15 +199,15 @@ async def sensor_none_fixture(
     # disable pydantic validation so mocking can happen
     Sensor.__config__.validate_assignment = False
 
-    sensor_obj = mock_sensor.copy(deep=True)
+    sensor_obj = mock_sensor.copy()
     sensor_obj._api = mock_entry.api
     sensor_obj.name = "Test Sensor"
     sensor_obj.mount_type = MountType.LEAK
     sensor_obj.battery_status.is_low = False
     sensor_obj.alarm_settings.is_enabled = False
-    sensor_obj.tampering_detected_at = now - timedelta(hours=1)
+    sensor_obj.tampering_detected_at = None
 
-    mock_entry.api.bootstrap.reset_objects()
+    reset_objects(mock_entry.api.bootstrap)
     mock_entry.api.bootstrap.nvr.system_info.storage.devices = []
     mock_entry.api.bootstrap.sensors = {
         sensor_obj.id: sensor_obj,
@@ -216,7 +216,7 @@ async def sensor_none_fixture(
     await hass.config_entries.async_setup(mock_entry.entry.entry_id)
     await hass.async_block_till_done()
 
-    assert_entity_counts(hass, Platform.BINARY_SENSOR, 4, 4)
+    assert_entity_counts(hass, Platform.BINARY_SENSOR, 10, 10)
 
     yield sensor_obj
 
@@ -230,7 +230,7 @@ async def test_binary_sensor_setup_light(
 
     entity_registry = er.async_get(hass)
 
-    for index, description in enumerate(LIGHT_SENSORS):
+    for description in LIGHT_SENSORS:
         unique_id, entity_id = ids_from_device_description(
             Platform.BINARY_SENSOR, light, description
         )
@@ -243,9 +243,6 @@ async def test_binary_sensor_setup_light(
         assert state
         assert state.state == STATE_OFF
         assert state.attributes[ATTR_ATTRIBUTION] == DEFAULT_ATTRIBUTION
-
-        if index == 1:
-            assert state.attributes[ATTR_LAST_TRIP_TIME] == now - timedelta(hours=1)
 
 
 async def test_binary_sensor_setup_camera_all(
@@ -268,8 +265,6 @@ async def test_binary_sensor_setup_camera_all(
     assert state
     assert state.state == STATE_OFF
     assert state.attributes[ATTR_ATTRIBUTION] == DEFAULT_ATTRIBUTION
-
-    assert state.attributes[ATTR_LAST_TRIP_TIME] == now - timedelta(hours=1)
 
     # Is Dark
     description = CAMERA_SENSORS[1]
@@ -333,8 +328,7 @@ async def test_binary_sensor_setup_sensor(
 
     entity_registry = er.async_get(hass)
 
-    expected_trip_time = now - timedelta(hours=1)
-    for index, description in enumerate(SENSE_SENSORS):
+    for description in SENSE_SENSORS:
         unique_id, entity_id = ids_from_device_description(
             Platform.BINARY_SENSOR, sensor, description
         )
@@ -347,9 +341,6 @@ async def test_binary_sensor_setup_sensor(
         assert state
         assert state.state == STATE_OFF
         assert state.attributes[ATTR_ATTRIBUTION] == DEFAULT_ATTRIBUTION
-
-        if index != 1:
-            assert state.attributes[ATTR_LAST_TRIP_TIME] == expected_trip_time
 
 
 async def test_binary_sensor_setup_sensor_none(
@@ -376,7 +367,6 @@ async def test_binary_sensor_setup_sensor_none(
 
         state = hass.states.get(entity_id)
         assert state
-        print(entity_id)
         assert state.state == expected[index]
         assert state.attributes[ATTR_ATTRIBUTION] == DEFAULT_ATTRIBUTION
 

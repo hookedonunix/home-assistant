@@ -7,35 +7,24 @@ import logging
 import voluptuous as vol
 
 from homeassistant.components import climate
-from homeassistant.components.climate import (
-    PLATFORM_SCHEMA as CLIMATE_PLATFORM_SCHEMA,
-    ClimateEntity,
-)
+from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
     ATTR_HVAC_MODE,
     ATTR_TARGET_TEMP_HIGH,
     ATTR_TARGET_TEMP_LOW,
-    CURRENT_HVAC_ACTIONS,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_TEMP,
     FAN_AUTO,
     FAN_HIGH,
     FAN_LOW,
     FAN_MEDIUM,
-    HVAC_MODE_AUTO,
-    HVAC_MODE_COOL,
-    HVAC_MODE_DRY,
-    HVAC_MODE_FAN_ONLY,
-    HVAC_MODE_HEAT,
-    HVAC_MODE_OFF,
     PRESET_AWAY,
     PRESET_NONE,
-    SUPPORT_AUX_HEAT,
-    SUPPORT_FAN_MODE,
-    SUPPORT_PRESET_MODE,
-    SUPPORT_SWING_MODE,
-    SUPPORT_TARGET_TEMPERATURE,
-    SUPPORT_TARGET_TEMPERATURE_RANGE,
+    SWING_OFF,
+    SWING_ON,
+    ClimateEntityFeature,
+    HVACAction,
+    HVACMode,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -48,25 +37,26 @@ from homeassistant.const import (
     PRECISION_HALVES,
     PRECISION_TENTHS,
     PRECISION_WHOLE,
-    STATE_ON,
 )
 from homeassistant.core import HomeAssistant, callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.reload import async_setup_reload_service
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from . import (
-    MQTT_BASE_PLATFORM_SCHEMA,
-    PLATFORMS,
-    MqttCommandTemplate,
-    MqttValueTemplate,
-    subscription,
-)
-from .. import mqtt
-from .const import CONF_ENCODING, CONF_QOS, CONF_RETAIN, DOMAIN
+from . import subscription
+from .config import DEFAULT_RETAIN, MQTT_BASE_SCHEMA
+from .const import CONF_ENCODING, CONF_QOS, CONF_RETAIN, PAYLOAD_NONE
 from .debug_info import log_messages
-from .mixins import MQTT_ENTITY_COMMON_SCHEMA, MqttEntity, async_setup_entry_helper
+from .mixins import (
+    MQTT_ENTITY_COMMON_SCHEMA,
+    MqttEntity,
+    async_setup_entry_helper,
+    async_setup_platform_discovery,
+    async_setup_platform_helper,
+    warn_for_legacy_schema,
+)
+from .models import MqttCommandTemplate, MqttValueTemplate
+from .util import valid_publish_topic, valid_subscribe_topic
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,6 +69,7 @@ CONF_ACTION_TOPIC = "action_topic"
 CONF_AUX_COMMAND_TOPIC = "aux_command_topic"
 CONF_AUX_STATE_TEMPLATE = "aux_state_template"
 CONF_AUX_STATE_TOPIC = "aux_state_topic"
+# AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
 CONF_AWAY_MODE_COMMAND_TOPIC = "away_mode_command_topic"
 CONF_AWAY_MODE_STATE_TEMPLATE = "away_mode_state_template"
 CONF_AWAY_MODE_STATE_TOPIC = "away_mode_state_topic"
@@ -89,6 +80,7 @@ CONF_FAN_MODE_COMMAND_TOPIC = "fan_mode_command_topic"
 CONF_FAN_MODE_LIST = "fan_modes"
 CONF_FAN_MODE_STATE_TEMPLATE = "fan_mode_state_template"
 CONF_FAN_MODE_STATE_TOPIC = "fan_mode_state_topic"
+# AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
 CONF_HOLD_COMMAND_TEMPLATE = "hold_command_template"
 CONF_HOLD_COMMAND_TOPIC = "hold_command_topic"
 CONF_HOLD_STATE_TEMPLATE = "hold_state_template"
@@ -103,7 +95,12 @@ CONF_POWER_COMMAND_TOPIC = "power_command_topic"
 CONF_POWER_STATE_TEMPLATE = "power_state_template"
 CONF_POWER_STATE_TOPIC = "power_state_topic"
 CONF_PRECISION = "precision"
-# CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.4
+CONF_PRESET_MODE_STATE_TOPIC = "preset_mode_state_topic"
+CONF_PRESET_MODE_COMMAND_TOPIC = "preset_mode_command_topic"
+CONF_PRESET_MODE_VALUE_TEMPLATE = "preset_mode_value_template"
+CONF_PRESET_MODE_COMMAND_TEMPLATE = "preset_mode_command_template"
+CONF_PRESET_MODES_LIST = "preset_modes"
+# CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
 CONF_SEND_IF_OFF = "send_if_off"
 CONF_SWING_MODE_COMMAND_TEMPLATE = "swing_mode_command_template"
 CONF_SWING_MODE_COMMAND_TOPIC = "swing_mode_command_topic"
@@ -126,8 +123,6 @@ CONF_TEMP_INITIAL = "initial"
 CONF_TEMP_MAX = "max_temp"
 CONF_TEMP_MIN = "min_temp"
 CONF_TEMP_STEP = "temp_step"
-
-PAYLOAD_NONE = "None"
 
 MQTT_CLIMATE_ATTRIBUTES_BLOCKED = frozenset(
     {
@@ -156,13 +151,16 @@ MQTT_CLIMATE_ATTRIBUTES_BLOCKED = frozenset(
 
 VALUE_TEMPLATE_KEYS = (
     CONF_AUX_STATE_TEMPLATE,
+    # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
     CONF_AWAY_MODE_STATE_TEMPLATE,
     CONF_CURRENT_TEMP_TEMPLATE,
     CONF_FAN_MODE_STATE_TEMPLATE,
+    # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
     CONF_HOLD_STATE_TEMPLATE,
     CONF_MODE_STATE_TEMPLATE,
     CONF_POWER_STATE_TEMPLATE,
     CONF_ACTION_TEMPLATE,
+    CONF_PRESET_MODE_VALUE_TEMPLATE,
     CONF_SWING_MODE_STATE_TEMPLATE,
     CONF_TEMP_HIGH_STATE_TEMPLATE,
     CONF_TEMP_LOW_STATE_TEMPLATE,
@@ -171,29 +169,48 @@ VALUE_TEMPLATE_KEYS = (
 
 COMMAND_TEMPLATE_KEYS = {
     CONF_FAN_MODE_COMMAND_TEMPLATE,
+    # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
     CONF_HOLD_COMMAND_TEMPLATE,
     CONF_MODE_COMMAND_TEMPLATE,
+    CONF_PRESET_MODE_COMMAND_TEMPLATE,
     CONF_SWING_MODE_COMMAND_TEMPLATE,
     CONF_TEMP_COMMAND_TEMPLATE,
     CONF_TEMP_HIGH_COMMAND_TEMPLATE,
     CONF_TEMP_LOW_COMMAND_TEMPLATE,
 }
 
+# AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
+DEPRECATED_INVALID = [
+    CONF_AWAY_MODE_COMMAND_TOPIC,
+    CONF_AWAY_MODE_STATE_TEMPLATE,
+    CONF_AWAY_MODE_STATE_TOPIC,
+    CONF_HOLD_COMMAND_TEMPLATE,
+    CONF_HOLD_COMMAND_TOPIC,
+    CONF_HOLD_STATE_TEMPLATE,
+    CONF_HOLD_STATE_TOPIC,
+    CONF_HOLD_LIST,
+]
+
+
 TOPIC_KEYS = (
+    CONF_ACTION_TOPIC,
     CONF_AUX_COMMAND_TOPIC,
     CONF_AUX_STATE_TOPIC,
+    # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
     CONF_AWAY_MODE_COMMAND_TOPIC,
     CONF_AWAY_MODE_STATE_TOPIC,
     CONF_CURRENT_TEMP_TOPIC,
     CONF_FAN_MODE_COMMAND_TOPIC,
     CONF_FAN_MODE_STATE_TOPIC,
+    # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
     CONF_HOLD_COMMAND_TOPIC,
     CONF_HOLD_STATE_TOPIC,
     CONF_MODE_COMMAND_TOPIC,
     CONF_MODE_STATE_TOPIC,
     CONF_POWER_COMMAND_TOPIC,
     CONF_POWER_STATE_TOPIC,
-    CONF_ACTION_TOPIC,
+    CONF_PRESET_MODE_COMMAND_TOPIC,
+    CONF_PRESET_MODE_STATE_TOPIC,
     CONF_SWING_MODE_COMMAND_TOPIC,
     CONF_SWING_MODE_STATE_TOPIC,
     CONF_TEMP_COMMAND_TOPIC,
@@ -204,99 +221,151 @@ TOPIC_KEYS = (
     CONF_TEMP_STATE_TOPIC,
 )
 
-SCHEMA_BASE = CLIMATE_PLATFORM_SCHEMA.extend(MQTT_BASE_PLATFORM_SCHEMA.schema)
-_PLATFORM_SCHEMA_BASE = SCHEMA_BASE.extend(
+
+def valid_preset_mode_configuration(config):
+    """Validate that the preset mode reset payload is not one of the preset modes."""
+    if PRESET_NONE in config.get(CONF_PRESET_MODES_LIST):
+        raise ValueError("preset_modes must not include preset mode 'none'")
+    if config.get(CONF_PRESET_MODE_COMMAND_TOPIC):
+        for config_parameter in DEPRECATED_INVALID:
+            if config.get(config_parameter):
+                raise vol.MultipleInvalid(
+                    "preset_modes cannot be used with deprecated away or hold mode config options"
+                )
+    return config
+
+
+_PLATFORM_SCHEMA_BASE = MQTT_BASE_SCHEMA.extend(
     {
-        vol.Optional(CONF_AUX_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_AUX_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(CONF_AUX_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_AUX_STATE_TOPIC): mqtt.valid_subscribe_topic,
-        vol.Optional(CONF_AWAY_MODE_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_AUX_STATE_TOPIC): valid_subscribe_topic,
+        # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
+        vol.Optional(CONF_AWAY_MODE_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(CONF_AWAY_MODE_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_AWAY_MODE_STATE_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_AWAY_MODE_STATE_TOPIC): valid_subscribe_topic,
         vol.Optional(CONF_CURRENT_TEMP_TEMPLATE): cv.template,
-        vol.Optional(CONF_CURRENT_TEMP_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_CURRENT_TEMP_TOPIC): valid_subscribe_topic,
         vol.Optional(CONF_FAN_MODE_COMMAND_TEMPLATE): cv.template,
-        vol.Optional(CONF_FAN_MODE_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_FAN_MODE_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(
             CONF_FAN_MODE_LIST,
             default=[FAN_AUTO, FAN_LOW, FAN_MEDIUM, FAN_HIGH],
         ): cv.ensure_list,
         vol.Optional(CONF_FAN_MODE_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_FAN_MODE_STATE_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_FAN_MODE_STATE_TOPIC): valid_subscribe_topic,
+        # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
         vol.Optional(CONF_HOLD_COMMAND_TEMPLATE): cv.template,
-        vol.Optional(CONF_HOLD_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_HOLD_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(CONF_HOLD_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_HOLD_STATE_TOPIC): mqtt.valid_subscribe_topic,
-        vol.Optional(CONF_HOLD_LIST, default=list): cv.ensure_list,
+        vol.Optional(CONF_HOLD_STATE_TOPIC): valid_subscribe_topic,
+        vol.Optional(CONF_HOLD_LIST): cv.ensure_list,
         vol.Optional(CONF_MODE_COMMAND_TEMPLATE): cv.template,
-        vol.Optional(CONF_MODE_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_MODE_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(
             CONF_MODE_LIST,
             default=[
-                HVAC_MODE_AUTO,
-                HVAC_MODE_OFF,
-                HVAC_MODE_COOL,
-                HVAC_MODE_HEAT,
-                HVAC_MODE_DRY,
-                HVAC_MODE_FAN_ONLY,
+                HVACMode.AUTO,
+                HVACMode.OFF,
+                HVACMode.COOL,
+                HVACMode.HEAT,
+                HVACMode.DRY,
+                HVACMode.FAN_ONLY,
             ],
         ): cv.ensure_list,
         vol.Optional(CONF_MODE_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_MODE_STATE_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_MODE_STATE_TOPIC): valid_subscribe_topic,
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
         vol.Optional(CONF_PAYLOAD_ON, default="ON"): cv.string,
         vol.Optional(CONF_PAYLOAD_OFF, default="OFF"): cv.string,
-        vol.Optional(CONF_POWER_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_POWER_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(CONF_POWER_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_POWER_STATE_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_POWER_STATE_TOPIC): valid_subscribe_topic,
         vol.Optional(CONF_PRECISION): vol.In(
             [PRECISION_TENTHS, PRECISION_HALVES, PRECISION_WHOLE]
         ),
-        vol.Optional(CONF_RETAIN, default=mqtt.DEFAULT_RETAIN): cv.boolean,
-        # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.4
-        vol.Optional(CONF_SEND_IF_OFF, default=True): cv.boolean,
+        vol.Optional(CONF_RETAIN, default=DEFAULT_RETAIN): cv.boolean,
+        # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
+        vol.Optional(CONF_SEND_IF_OFF): cv.boolean,
         vol.Optional(CONF_ACTION_TEMPLATE): cv.template,
-        vol.Optional(CONF_ACTION_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_ACTION_TOPIC): valid_subscribe_topic,
+        # CONF_PRESET_MODE_COMMAND_TOPIC and CONF_PRESET_MODES_LIST must be used together
+        vol.Inclusive(
+            CONF_PRESET_MODE_COMMAND_TOPIC, "preset_modes"
+        ): valid_publish_topic,
+        vol.Inclusive(
+            CONF_PRESET_MODES_LIST, "preset_modes", default=[]
+        ): cv.ensure_list,
+        vol.Optional(CONF_PRESET_MODE_COMMAND_TEMPLATE): cv.template,
+        vol.Optional(CONF_PRESET_MODE_STATE_TOPIC): valid_subscribe_topic,
+        vol.Optional(CONF_PRESET_MODE_VALUE_TEMPLATE): cv.template,
         vol.Optional(CONF_SWING_MODE_COMMAND_TEMPLATE): cv.template,
-        vol.Optional(CONF_SWING_MODE_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_SWING_MODE_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(
-            CONF_SWING_MODE_LIST, default=[STATE_ON, HVAC_MODE_OFF]
+            CONF_SWING_MODE_LIST, default=[SWING_ON, SWING_OFF]
         ): cv.ensure_list,
         vol.Optional(CONF_SWING_MODE_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_SWING_MODE_STATE_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_SWING_MODE_STATE_TOPIC): valid_subscribe_topic,
         vol.Optional(CONF_TEMP_INITIAL, default=21): cv.positive_int,
         vol.Optional(CONF_TEMP_MIN, default=DEFAULT_MIN_TEMP): vol.Coerce(float),
         vol.Optional(CONF_TEMP_MAX, default=DEFAULT_MAX_TEMP): vol.Coerce(float),
         vol.Optional(CONF_TEMP_STEP, default=1.0): vol.Coerce(float),
         vol.Optional(CONF_TEMP_COMMAND_TEMPLATE): cv.template,
-        vol.Optional(CONF_TEMP_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_TEMP_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(CONF_TEMP_HIGH_COMMAND_TEMPLATE): cv.template,
-        vol.Optional(CONF_TEMP_HIGH_COMMAND_TOPIC): mqtt.valid_publish_topic,
-        vol.Optional(CONF_TEMP_HIGH_STATE_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_TEMP_HIGH_COMMAND_TOPIC): valid_publish_topic,
+        vol.Optional(CONF_TEMP_HIGH_STATE_TOPIC): valid_subscribe_topic,
         vol.Optional(CONF_TEMP_HIGH_STATE_TEMPLATE): cv.template,
         vol.Optional(CONF_TEMP_LOW_COMMAND_TEMPLATE): cv.template,
-        vol.Optional(CONF_TEMP_LOW_COMMAND_TOPIC): mqtt.valid_publish_topic,
+        vol.Optional(CONF_TEMP_LOW_COMMAND_TOPIC): valid_publish_topic,
         vol.Optional(CONF_TEMP_LOW_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_TEMP_LOW_STATE_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_TEMP_LOW_STATE_TOPIC): valid_subscribe_topic,
         vol.Optional(CONF_TEMP_STATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_TEMP_STATE_TOPIC): mqtt.valid_subscribe_topic,
+        vol.Optional(CONF_TEMP_STATE_TOPIC): valid_subscribe_topic,
         vol.Optional(CONF_TEMPERATURE_UNIT): cv.temperature_unit,
         vol.Optional(CONF_VALUE_TEMPLATE): cv.template,
     }
 ).extend(MQTT_ENTITY_COMMON_SCHEMA.schema)
 
-PLATFORM_SCHEMA = vol.All(
-    # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.4
-    cv.deprecated(CONF_SEND_IF_OFF),
+PLATFORM_SCHEMA_MODERN = vol.All(
     _PLATFORM_SCHEMA_BASE,
+    valid_preset_mode_configuration,
+)
+
+# Configuring MQTT Climate under the climate platform key is deprecated in HA Core 2022.6
+PLATFORM_SCHEMA = vol.All(
+    cv.PLATFORM_SCHEMA.extend(_PLATFORM_SCHEMA_BASE.schema),
+    # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
+    cv.deprecated(CONF_SEND_IF_OFF),
+    # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
+    cv.deprecated(CONF_AWAY_MODE_COMMAND_TOPIC),
+    cv.deprecated(CONF_AWAY_MODE_STATE_TEMPLATE),
+    cv.deprecated(CONF_AWAY_MODE_STATE_TOPIC),
+    cv.deprecated(CONF_HOLD_COMMAND_TEMPLATE),
+    cv.deprecated(CONF_HOLD_COMMAND_TOPIC),
+    cv.deprecated(CONF_HOLD_STATE_TEMPLATE),
+    cv.deprecated(CONF_HOLD_STATE_TOPIC),
+    cv.deprecated(CONF_HOLD_LIST),
+    valid_preset_mode_configuration,
+    warn_for_legacy_schema(climate.DOMAIN),
 )
 
 _DISCOVERY_SCHEMA_BASE = _PLATFORM_SCHEMA_BASE.extend({}, extra=vol.REMOVE_EXTRA)
 
 DISCOVERY_SCHEMA = vol.All(
-    # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.4
-    cv.deprecated(CONF_SEND_IF_OFF),
     _DISCOVERY_SCHEMA_BASE,
+    # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
+    cv.deprecated(CONF_SEND_IF_OFF),
+    # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
+    cv.deprecated(CONF_AWAY_MODE_COMMAND_TOPIC),
+    cv.deprecated(CONF_AWAY_MODE_STATE_TEMPLATE),
+    cv.deprecated(CONF_AWAY_MODE_STATE_TOPIC),
+    cv.deprecated(CONF_HOLD_COMMAND_TEMPLATE),
+    cv.deprecated(CONF_HOLD_COMMAND_TOPIC),
+    cv.deprecated(CONF_HOLD_STATE_TEMPLATE),
+    cv.deprecated(CONF_HOLD_STATE_TOPIC),
+    cv.deprecated(CONF_HOLD_LIST),
+    valid_preset_mode_configuration,
 )
 
 
@@ -306,9 +375,15 @@ async def async_setup_platform(
     async_add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
-    """Set up MQTT climate device through configuration.yaml."""
-    await async_setup_reload_service(hass, DOMAIN, PLATFORMS)
-    await _async_setup_entity(hass, async_add_entities, config)
+    """Set up MQTT climate configured under the fan platform key (deprecated)."""
+    # The use of PLATFORM_SCHEMA is deprecated in HA Core 2022.6
+    await async_setup_platform_helper(
+        hass,
+        climate.DOMAIN,
+        discovery_info or config,
+        async_add_entities,
+        _async_setup_entity,
+    )
 
 
 async def async_setup_entry(
@@ -316,7 +391,12 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up MQTT climate device dynamically through MQTT discovery."""
+    """Set up MQTT climate device through configuration.yaml and dynamically through MQTT discovery."""
+    # load and initialize platform config from configuration.yaml
+    config_entry.async_on_unload(
+        await async_setup_platform_discovery(hass, climate.DOMAIN)
+    )
+    # setup for discovery
     setup = functools.partial(
         _async_setup_entity, hass, async_add_entities, config_entry=config_entry
     )
@@ -346,12 +426,21 @@ class MqttClimate(MqttEntity, ClimateEntity):
         self._current_swing_mode = None
         self._current_temp = None
         self._hold = None
+        self._preset_mode = None
         self._target_temp = None
         self._target_temp_high = None
         self._target_temp_low = None
         self._topic = None
         self._value_templates = None
         self._command_templates = None
+        self._feature_preset_mode = False
+        self._optimistic_preset_mode = None
+
+        # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
+        self._send_if_off = True
+        # AWAY and HOLD mode topics and templates are deprecated,
+        # support will be removed with release 2022.9
+        self._hold_list = []
 
         MqttEntity.__init__(self, hass, config, config_entry, discovery_data)
 
@@ -381,10 +470,17 @@ class MqttClimate(MqttEntity, ClimateEntity):
         if self._topic[CONF_FAN_MODE_STATE_TOPIC] is None:
             self._current_fan_mode = FAN_LOW
         if self._topic[CONF_SWING_MODE_STATE_TOPIC] is None:
-            self._current_swing_mode = HVAC_MODE_OFF
+            self._current_swing_mode = SWING_OFF
         if self._topic[CONF_MODE_STATE_TOPIC] is None:
-            self._current_operation = HVAC_MODE_OFF
+            self._current_operation = HVACMode.OFF
+        self._feature_preset_mode = CONF_PRESET_MODE_COMMAND_TOPIC in config
+        if self._feature_preset_mode:
+            self._preset_modes = config[CONF_PRESET_MODES_LIST]
+        else:
+            self._preset_modes = []
+        self._optimistic_preset_mode = CONF_PRESET_MODE_STATE_TOPIC not in config
         self._action = None
+        # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
         self._away = False
         self._hold = None
         self._aux = False
@@ -414,6 +510,15 @@ class MqttClimate(MqttEntity, ClimateEntity):
 
         self._command_templates = command_templates
 
+        # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
+        if CONF_SEND_IF_OFF in config:
+            self._send_if_off = config[CONF_SEND_IF_OFF]
+
+        # AWAY and HOLD mode topics and templates are deprecated,
+        # support will be removed with release 2022.9
+        if CONF_HOLD_LIST in config:
+            self._hold_list = config[CONF_HOLD_LIST]
+
     def _prepare_subscribe_topics(self):  # noqa: C901
         """(Re)Subscribe to topics."""
         topics = {}
@@ -437,21 +542,23 @@ class MqttClimate(MqttEntity, ClimateEntity):
         def handle_action_received(msg):
             """Handle receiving action via MQTT."""
             payload = render_template(msg, CONF_ACTION_TEMPLATE)
-            if payload in CURRENT_HVAC_ACTIONS:
-                self._action = payload
-                self.async_write_ha_state()
-            elif not payload or payload == PAYLOAD_NONE:
+            if not payload or payload == PAYLOAD_NONE:
                 _LOGGER.debug(
                     "Invalid %s action: %s, ignoring",
-                    CURRENT_HVAC_ACTIONS,
+                    [e.value for e in HVACAction],
                     payload,
                 )
-            else:
+                return
+            try:
+                self._action = HVACAction(payload)
+            except ValueError:
                 _LOGGER.warning(
                     "Invalid %s action: %s",
-                    CURRENT_HVAC_ACTIONS,
+                    [e.value for e in HVACAction],
                     payload,
                 )
+                return
+            self.async_write_ha_state()
 
         add_subscription(topics, CONF_ACTION_TOPIC, handle_action_received)
 
@@ -582,6 +689,7 @@ class MqttClimate(MqttEntity, ClimateEntity):
 
             self.async_write_ha_state()
 
+        # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
         @callback
         @log_messages(self.hass, self.entity_id)
         def handle_away_mode_received(msg):
@@ -598,6 +706,7 @@ class MqttClimate(MqttEntity, ClimateEntity):
 
         add_subscription(topics, CONF_AUX_STATE_TOPIC, handle_aux_mode_received)
 
+        # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
         @callback
         @log_messages(self.hass, self.entity_id)
         def handle_hold_mode_received(msg):
@@ -608,9 +717,37 @@ class MqttClimate(MqttEntity, ClimateEntity):
                 payload = None
 
             self._hold = payload
+            self._preset_mode = None
             self.async_write_ha_state()
 
         add_subscription(topics, CONF_HOLD_STATE_TOPIC, handle_hold_mode_received)
+
+        @callback
+        @log_messages(self.hass, self.entity_id)
+        def handle_preset_mode_received(msg):
+            """Handle receiving preset mode via MQTT."""
+            preset_mode = render_template(msg, CONF_PRESET_MODE_VALUE_TEMPLATE)
+            if preset_mode in [PRESET_NONE, PAYLOAD_NONE]:
+                self._preset_mode = None
+                self.async_write_ha_state()
+                return
+            if not preset_mode:
+                _LOGGER.debug("Ignoring empty preset_mode from '%s'", msg.topic)
+                return
+            if preset_mode not in self._preset_modes:
+                _LOGGER.warning(
+                    "'%s' received on topic %s. '%s' is not a valid preset mode",
+                    msg.payload,
+                    msg.topic,
+                    preset_mode,
+                )
+            else:
+                self._preset_mode = preset_mode
+                self.async_write_ha_state()
+
+        add_subscription(
+            topics, CONF_PRESET_MODE_STATE_TOPIC, handle_preset_mode_received
+        )
 
         self._sub_state = subscription.async_prepare_subscribe_topics(
             self.hass, self._sub_state, topics
@@ -648,17 +785,17 @@ class MqttClimate(MqttEntity, ClimateEntity):
         return self._target_temp_high
 
     @property
-    def hvac_action(self):
+    def hvac_action(self) -> HVACAction | None:
         """Return the current running hvac operation if supported."""
         return self._action
 
     @property
-    def hvac_mode(self):
+    def hvac_mode(self) -> HVACMode:
         """Return current operation ie. heat, cool, idle."""
         return self._current_operation
 
     @property
-    def hvac_modes(self):
+    def hvac_modes(self) -> list[HVACMode]:
         """Return the list of available operation modes."""
         return self._config[CONF_MODE_LIST]
 
@@ -668,8 +805,11 @@ class MqttClimate(MqttEntity, ClimateEntity):
         return self._config[CONF_TEMP_STEP]
 
     @property
-    def preset_mode(self):
+    def preset_mode(self) -> str | None:
         """Return preset mode."""
+        if self._feature_preset_mode and self._preset_mode is not None:
+            return self._preset_mode
+        # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
         if self._hold:
             return self._hold
         if self._away:
@@ -677,16 +817,20 @@ class MqttClimate(MqttEntity, ClimateEntity):
         return PRESET_NONE
 
     @property
-    def preset_modes(self):
+    def preset_modes(self) -> list:
         """Return preset modes."""
         presets = []
+        presets.extend(self._preset_modes)
 
+        # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
         if (self._topic[CONF_AWAY_MODE_STATE_TOPIC] is not None) or (
             self._topic[CONF_AWAY_MODE_COMMAND_TOPIC] is not None
         ):
             presets.append(PRESET_AWAY)
 
-        presets.extend(self._config[CONF_HOLD_LIST])
+        # AWAY and HOLD mode topics and templates are deprecated,
+        # support will be removed with release 2022.9
+        presets.extend(self._hold_list)
 
         if presets:
             presets.insert(0, PRESET_NONE)
@@ -710,8 +854,7 @@ class MqttClimate(MqttEntity, ClimateEntity):
 
     async def _publish(self, topic, payload):
         if self._topic[topic] is not None:
-            await mqtt.async_publish(
-                self.hass,
+            await self.async_publish(
                 self._topic[topic],
                 payload,
                 self._config[CONF_QOS],
@@ -727,11 +870,8 @@ class MqttClimate(MqttEntity, ClimateEntity):
                 # optimistic mode
                 setattr(self, attr, temp)
 
-            # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.4
-            if (
-                self._config[CONF_SEND_IF_OFF]
-                or self._current_operation != HVAC_MODE_OFF
-            ):
+            # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
+            if self._send_if_off or self._current_operation != HVACMode.OFF:
                 payload = self._command_templates[cmnd_template](temp)
                 await self._publish(cmnd_topic, payload)
 
@@ -770,8 +910,8 @@ class MqttClimate(MqttEntity, ClimateEntity):
 
     async def async_set_swing_mode(self, swing_mode):
         """Set new swing mode."""
-        # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.4
-        if self._config[CONF_SEND_IF_OFF] or self._current_operation != HVAC_MODE_OFF:
+        # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
+        if self._send_if_off or self._current_operation != HVACMode.OFF:
             payload = self._command_templates[CONF_SWING_MODE_COMMAND_TEMPLATE](
                 swing_mode
             )
@@ -783,8 +923,8 @@ class MqttClimate(MqttEntity, ClimateEntity):
 
     async def async_set_fan_mode(self, fan_mode):
         """Set new target temperature."""
-        # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.4
-        if self._config[CONF_SEND_IF_OFF] or self._current_operation != HVAC_MODE_OFF:
+        # CONF_SEND_IF_OFF is deprecated, support will be removed with release 2022.9
+        if self._send_if_off or self._current_operation != HVACMode.OFF:
             payload = self._command_templates[CONF_FAN_MODE_COMMAND_TEMPLATE](fan_mode)
             await self._publish(CONF_FAN_MODE_COMMAND_TOPIC, payload)
 
@@ -794,7 +934,7 @@ class MqttClimate(MqttEntity, ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode) -> None:
         """Set new operation mode."""
-        if hvac_mode == HVAC_MODE_OFF:
+        if hvac_mode == HVACMode.OFF:
             await self._publish(
                 CONF_POWER_COMMAND_TOPIC, self._config[CONF_PAYLOAD_OFF]
             )
@@ -818,11 +958,29 @@ class MqttClimate(MqttEntity, ClimateEntity):
         """List of available swing modes."""
         return self._config[CONF_SWING_MODE_LIST]
 
-    async def async_set_preset_mode(self, preset_mode):
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set a preset mode."""
-        # Track if we should optimistic update the state
+        if self._feature_preset_mode:
+            if preset_mode not in self.preset_modes and preset_mode is not PRESET_NONE:
+                _LOGGER.warning("'%s' is not a valid preset mode", preset_mode)
+                return
+            mqtt_payload = self._command_templates[CONF_PRESET_MODE_COMMAND_TEMPLATE](
+                preset_mode
+            )
+            await self._publish(
+                CONF_PRESET_MODE_COMMAND_TOPIC,
+                mqtt_payload,
+            )
+
+            if self._optimistic_preset_mode:
+                self._preset_mode = preset_mode if preset_mode != PRESET_NONE else None
+                self.async_write_ha_state()
+
+            return
+
+        # Update hold or away mode: Track if we should optimistic update the state
         optimistic_update = await self._set_away_mode(preset_mode == PRESET_AWAY)
-        hold_mode = preset_mode
+        hold_mode: str | None = preset_mode
         if preset_mode in [PRESET_NONE, PRESET_AWAY]:
             hold_mode = None
         optimistic_update = await self._set_hold_mode(hold_mode) or optimistic_update
@@ -830,6 +988,7 @@ class MqttClimate(MqttEntity, ClimateEntity):
         if optimistic_update:
             self.async_write_ha_state()
 
+    # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
     async def _set_away_mode(self, state):
         """Set away mode.
 
@@ -888,40 +1047,42 @@ class MqttClimate(MqttEntity, ClimateEntity):
         if (self._topic[CONF_TEMP_STATE_TOPIC] is not None) or (
             self._topic[CONF_TEMP_COMMAND_TOPIC] is not None
         ):
-            support |= SUPPORT_TARGET_TEMPERATURE
+            support |= ClimateEntityFeature.TARGET_TEMPERATURE
 
         if (self._topic[CONF_TEMP_LOW_STATE_TOPIC] is not None) or (
             self._topic[CONF_TEMP_LOW_COMMAND_TOPIC] is not None
         ):
-            support |= SUPPORT_TARGET_TEMPERATURE_RANGE
+            support |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
 
         if (self._topic[CONF_TEMP_HIGH_STATE_TOPIC] is not None) or (
             self._topic[CONF_TEMP_HIGH_COMMAND_TOPIC] is not None
         ):
-            support |= SUPPORT_TARGET_TEMPERATURE_RANGE
+            support |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
 
         if (self._topic[CONF_FAN_MODE_STATE_TOPIC] is not None) or (
             self._topic[CONF_FAN_MODE_COMMAND_TOPIC] is not None
         ):
-            support |= SUPPORT_FAN_MODE
+            support |= ClimateEntityFeature.FAN_MODE
 
         if (self._topic[CONF_SWING_MODE_STATE_TOPIC] is not None) or (
             self._topic[CONF_SWING_MODE_COMMAND_TOPIC] is not None
         ):
-            support |= SUPPORT_SWING_MODE
+            support |= ClimateEntityFeature.SWING_MODE
 
+        # AWAY and HOLD mode topics and templates are deprecated, support will be removed with release 2022.9
         if (
-            (self._topic[CONF_AWAY_MODE_STATE_TOPIC] is not None)
+            self._feature_preset_mode
+            or (self._topic[CONF_AWAY_MODE_STATE_TOPIC] is not None)
             or (self._topic[CONF_AWAY_MODE_COMMAND_TOPIC] is not None)
             or (self._topic[CONF_HOLD_STATE_TOPIC] is not None)
             or (self._topic[CONF_HOLD_COMMAND_TOPIC] is not None)
         ):
-            support |= SUPPORT_PRESET_MODE
+            support |= ClimateEntityFeature.PRESET_MODE
 
         if (self._topic[CONF_AUX_STATE_TOPIC] is not None) or (
             self._topic[CONF_AUX_COMMAND_TOPIC] is not None
         ):
-            support |= SUPPORT_AUX_HEAT
+            support |= ClimateEntityFeature.AUX_HEAT
 
         return support
 

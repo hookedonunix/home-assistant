@@ -19,6 +19,7 @@ from aiohomekit.model.services import Service
 from homeassistant.const import ATTR_VIA_DEVICE
 from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 
@@ -162,7 +163,7 @@ class HKDevice:
         if self.available == available:
             return
         self.available = available
-        self.hass.helpers.dispatcher.async_dispatcher_send(self.signal_state_updated)
+        async_dispatcher_send(self.hass, self.signal_state_updated)
 
     async def async_setup(self) -> bool:
         """Prepare to use a paired HomeKit device in Home Assistant."""
@@ -378,7 +379,7 @@ class HKDevice:
 
         if self.watchable_characteristics:
             await self.pairing.subscribe(self.watchable_characteristics)
-            if not self.pairing.connection.is_connected:
+            if not self.pairing.is_connected:
                 return
 
         await self.async_update()
@@ -506,7 +507,7 @@ class HKDevice:
     async def async_update(self, now=None):
         """Poll state of all entities attached to this bridge/accessory."""
         if not self.pollable_characteristics:
-            self.async_set_available_state(self.pairing.connection.is_connected)
+            self.async_set_available_state(self.pairing.is_connected)
             _LOGGER.debug(
                 "HomeKit connection not polling any characteristics: %s", self.unique_id
             )
@@ -568,7 +569,7 @@ class HKDevice:
         # For now we update both
         self.entity_map.process_changes(new_values_dict)
 
-        self.hass.helpers.dispatcher.async_dispatcher_send(self.signal_state_updated)
+        async_dispatcher_send(self.hass, self.signal_state_updated)
 
     async def get_characteristics(self, *args, **kwargs) -> dict[str, Any]:
         """Read latest state from homekit accessory."""

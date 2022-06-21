@@ -10,6 +10,15 @@
             "1": "Uit",
             "2": "Aan"
         },
+        "tuya__countdown": {
+            "1h": "1 uur",
+            "2h": "2 uur",
+            "3h": "3 uur",
+            "4h": "4 uur",
+            "5h": "5 uur",
+            "6h": "6 uur",
+            "cancel": "Annuleren"
+        },
         "tuya__curtain_mode": {
             "morning": "Ochtend",
             "night": "Nacht"
@@ -31,6 +40,32 @@
             "click": "Duw",
             "switch": "Schakelaar"
         },
+        "tuya__humidifier_level": {
+            "level_1": "Niveau 1",
+            "level_10": "Niveau 10",
+            "level_2": "Niveau 2",
+            "level_3": "Niveau 3",
+            "level_4": "Niveau 4",
+            "level_5": "Niveau 5",
+            "level_6": "Niveau 6",
+            "level_7": "Niveau 7",
+            "level_8": "Niveau 8",
+            "level_9": "Niveau 9"
+        },
+        "tuya__humidifier_moodlighting": {
+            "1": "Stemming 1",
+            "2": "Stemming 2",
+            "3": "Stemming 3",
+            "4": "Stemming 4",
+            "5": "Stemming 5"
+        },
+        "tuya__humidifier_spray_mode": {
+            "auto": "Auto",
+            "health": "Gezondheid",
+            "humidity": "Vochtigheid",
+            "sleep": "Slapen",
+            "work": "Werk"
+        },
         "tuya__ipc_work_mode": {
             "0": "Energiezuinige modus",
             "1": "Continue werkmodus:"
@@ -42,7 +77,7 @@
         },
         "tuya__light_mode": {
             "none": "Uit",
-            "pos": "Plaats van schakelaar aangeven",
+            "pos": "Schakelpositie aangeven",
             "relay": "Aan/uit-toestand aangeven"
         },
         "tuya__motion_sensitivity": {
@@ -55,8 +90,8 @@
             "2": "Continu opnemen"
         },
         "tuya__relay_status": {
-            "last": "Onthoud laatste staat",
-            "memory": "Onthoud laatste staat",
+            "last": "Laatste status onthouden",
+            "memory": "Laatste status onthouden",
             "off": "Uit",
             "on": "Aan",
             "power_off": "Uit",
@@ -81,7 +116,7 @@
             "mop": "Dweil",
             "part": "Deel",
             "partial_bow": "Boog gedeeltelijk",
-            "pick_zone": "Kies zone",
+            "pick_zone": "Zone kiezen",
             "point": "Punt",
             "pose": "Houding",
             "random": "Willekeurig",

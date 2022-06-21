@@ -6,10 +6,16 @@
         },
         "step": {
             "user": {
+                "description": "Vuoi configurare la Stazione Spaziale Internazionale (ISS)?"
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
                 "data": {
-                    "show_on_map": "Mostrare sulla mappa?"
-                },
-                "description": "Vuoi configurare la Stazione Spaziale Internazionale?"
+                    "show_on_map": "Mostra sulla mappa"
+                }
             }
         }
     }
