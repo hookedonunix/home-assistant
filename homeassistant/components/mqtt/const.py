@@ -91,6 +91,7 @@ PLATFORMS = [
     Platform.SIREN,
     Platform.SWITCH,
     Platform.VACUUM,
+    Platform.WATER_HEATER,
 ]
 
 RELOADABLE_PLATFORMS = [
@@ -111,4 +112,5 @@ RELOADABLE_PLATFORMS = [
     Platform.SIREN,
     Platform.SWITCH,
     Platform.VACUUM,
+    Platform.WATER_HEATER,
 ]
