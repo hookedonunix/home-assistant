@@ -22,12 +22,8 @@ from homeassistant.util.percentage import (
     ranged_value_to_percentage,
 )
 
-from . import (
-    EsphomeEntity,
-    EsphomeEnumMapper,
-    esphome_state_property,
-    platform_async_setup_entry,
-)
+from . import EsphomeEntity, esphome_state_property, platform_async_setup_entry
+from .enum_mapper import EsphomeEnumMapper
 
 ORDERED_NAMED_FAN_SPEEDS = [FanSpeed.LOW, FanSpeed.MEDIUM, FanSpeed.HIGH]
 
@@ -112,13 +108,13 @@ class EsphomeFan(EsphomeEntity[FanInfo, FanState], FanEntity):
             key=self._static_info.key, direction=_FAN_DIRECTIONS.from_hass(direction)
         )
 
-    @property  # type: ignore[misc]
+    @property
     @esphome_state_property
     def is_on(self) -> bool | None:
         """Return true if the entity is on."""
         return self._state.state
 
-    @property  # type: ignore[misc]
+    @property
     @esphome_state_property
     def percentage(self) -> int | None:
         """Return the current speed percentage."""
@@ -141,7 +137,7 @@ class EsphomeFan(EsphomeEntity[FanInfo, FanState], FanEntity):
             return len(ORDERED_NAMED_FAN_SPEEDS)
         return self._static_info.supported_speed_levels
 
-    @property  # type: ignore[misc]
+    @property
     @esphome_state_property
     def oscillating(self) -> bool | None:
         """Return the oscillation state."""
@@ -149,7 +145,7 @@ class EsphomeFan(EsphomeEntity[FanInfo, FanState], FanEntity):
             return None
         return self._state.oscillating
 
-    @property  # type: ignore[misc]
+    @property
     @esphome_state_property
     def current_direction(self) -> str | None:
         """Return the current fan direction."""
@@ -158,9 +154,9 @@ class EsphomeFan(EsphomeEntity[FanInfo, FanState], FanEntity):
         return _FAN_DIRECTIONS.from_esphome(self._state.direction)
 
     @property
-    def supported_features(self) -> int:
+    def supported_features(self) -> FanEntityFeature:
         """Flag supported features."""
-        flags = 0
+        flags = FanEntityFeature(0)
         if self._static_info.supports_oscillation:
             flags |= FanEntityFeature.OSCILLATE
         if self._static_info.supports_speed:

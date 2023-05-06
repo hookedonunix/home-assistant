@@ -11,6 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import ADVANTAGE_AIR_RETRY, DOMAIN
+from .models import AdvantageAirData
 
 ADVANTAGE_AIR_SYNC_INTERVAL = 15
 PLATFORMS = [
@@ -52,26 +53,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_interval=timedelta(seconds=ADVANTAGE_AIR_SYNC_INTERVAL),
     )
 
-    def error_handle_factory(func):
-        """Return the provided API function wrapped in an error handler and coordinator refresh."""
-
-        async def error_handle(param):
-            try:
-                if await func(param):
-                    await coordinator.async_refresh()
-            except ApiError as err:
-                _LOGGER.warning(err)
-
-        return error_handle
-
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {
-        "coordinator": coordinator,
-        "async_change": error_handle_factory(api.aircon.async_set),
-        "async_set_light": error_handle_factory(api.lights.async_set),
-    }
+    hass.data[DOMAIN][entry.entry_id] = AdvantageAirData(coordinator, api)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

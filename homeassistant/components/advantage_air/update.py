@@ -1,4 +1,5 @@
 """Advantage Air Update platform."""
+
 from homeassistant.components.update import UpdateEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -7,6 +8,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN as ADVANTAGE_AIR_DOMAIN
 from .entity import AdvantageAirEntity
+from .models import AdvantageAirData
 
 
 async def async_setup_entry(
@@ -16,7 +18,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up AdvantageAir update platform."""
 
-    instance = hass.data[ADVANTAGE_AIR_DOMAIN][config_entry.entry_id]
+    instance: AdvantageAirData = hass.data[ADVANTAGE_AIR_DOMAIN][config_entry.entry_id]
 
     async_add_entities([AdvantageAirApp(instance)])
 
@@ -26,7 +28,7 @@ class AdvantageAirApp(AdvantageAirEntity, UpdateEntity):
 
     _attr_name = "App"
 
-    def __init__(self, instance):
+    def __init__(self, instance: AdvantageAirData) -> None:
         """Initialize the Advantage Air App."""
         super().__init__(instance)
         self._attr_device_info = DeviceInfo(
@@ -40,12 +42,12 @@ class AdvantageAirApp(AdvantageAirEntity, UpdateEntity):
         )
 
     @property
-    def installed_version(self):
+    def installed_version(self) -> str:
         """Return the current app version."""
         return self.coordinator.data["system"]["myAppRev"]
 
     @property
-    def latest_version(self):
+    def latest_version(self) -> str:
         """Return if there is an update."""
         if self.coordinator.data["system"]["needsUpdate"]:
             return "Needs Update"

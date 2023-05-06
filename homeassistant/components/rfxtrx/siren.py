@@ -58,8 +58,8 @@ async def async_setup_entry(
         event: rfxtrxmod.RFXtrxEvent,
         auto: rfxtrxmod.RFXtrxEvent | None,
         device_id: DeviceTuple,
-        entity_info: dict,
-    ):
+        entity_info: dict[str, Any],
+    ) -> list[Entity]:
         """Construct a entity from an event."""
         device = event.device
 
@@ -85,6 +85,7 @@ async def async_setup_entry(
                         auto,
                     )
                 ]
+        return []
 
     await async_setup_platform_entry(
         hass, config_entry, async_add_entities, supported, _constructor
@@ -117,6 +118,11 @@ class RfxtrxOffDelayMixin(Entity):
         if self._timeout:
             self._timeout()
             self._timeout = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Run when entity will be removed from hass."""
+        self._cancel_timeout()
+        return await super().async_will_remove_from_hass()
 
 
 class RfxtrxChime(RfxtrxCommandEntity, SirenEntity, RfxtrxOffDelayMixin):

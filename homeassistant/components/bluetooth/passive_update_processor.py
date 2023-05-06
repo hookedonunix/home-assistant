@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from . import BluetoothChange, BluetoothScanningMode, BluetoothServiceInfoBleak
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class PassiveBluetoothEntityKey:
     """Key for a passive bluetooth entity.
 
@@ -36,7 +36,7 @@ class PassiveBluetoothEntityKey:
 _T = TypeVar("_T")
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class PassiveBluetoothDataUpdate(Generic[_T]):
     """Generic bluetooth data."""
 
@@ -101,9 +101,11 @@ class PassiveBluetoothProcessorCoordinator(
         return remove_processor
 
     @callback
-    def _async_handle_unavailable(self, address: str) -> None:
+    def _async_handle_unavailable(
+        self, service_info: BluetoothServiceInfoBleak
+    ) -> None:
         """Handle the device going unavailable."""
-        super()._async_handle_unavailable(address)
+        super()._async_handle_unavailable(service_info)
         for processor in self._processors:
             processor.async_handle_unavailable()
 
@@ -283,8 +285,9 @@ class PassiveBluetoothDataProcessor(Generic[_T]):
 
         if not isinstance(new_data, PassiveBluetoothDataUpdate):
             self.last_update_success = False  # type: ignore[unreachable]
-            raise ValueError(
-                f"The update_method for {self.coordinator.name} returned {new_data} instead of a PassiveBluetoothDataUpdate"
+            raise TypeError(
+                f"The update_method for {self.coordinator.name} returned"
+                f" {new_data} instead of a PassiveBluetoothDataUpdate"
             )
 
         if not self.last_update_success:
