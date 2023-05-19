@@ -1,13 +1,15 @@
 """Support for MQTT climate devices."""
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 import logging
+from typing import Any
 
 import voluptuous as vol
 
 from homeassistant.components import water_heater
-from homeassistant.components.water_heater import (  # SUPPORT_OPERATION_MODE,; SUPPORT_AWAY_MODE,
+from homeassistant.components.water_heater import (
     ATTR_TARGET_TEMP_HIGH,
     ATTR_TARGET_TEMP_LOW,
     DEFAULT_MAX_TEMP,
@@ -19,11 +21,11 @@ from homeassistant.components.water_heater import (  # SUPPORT_OPERATION_MODE,; 
     STATE_HEAT_PUMP,
     STATE_HIGH_DEMAND,
     STATE_PERFORMANCE,
-    SUPPORT_TARGET_TEMPERATURE,
     WaterHeaterEntity,
+    WaterHeaterEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (  # STATE_ON,
+from homeassistant.const import (
     ATTR_TEMPERATURE,
     CONF_NAME,
     CONF_PAYLOAD_OFF,
@@ -38,20 +40,22 @@ from homeassistant.const import (  # STATE_ON,
 from homeassistant.core import HomeAssistant, callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.reload import async_setup_reload_service
+from homeassistant.helpers.template import Template
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from . import (
-    MQTT_BASE_PLATFORM_SCHEMA,
-    PLATFORMS,
-    MqttCommandTemplate,
-    MqttValueTemplate,
-    subscription,
-)
+from . import subscription
 from .. import mqtt
-from .const import CONF_ENCODING, CONF_QOS, CONF_RETAIN, DOMAIN
+from .config import MQTT_BASE_SCHEMA
+from .const import CONF_ENCODING, CONF_QOS, CONF_RETAIN
 from .debug_info import log_messages
 from .mixins import MQTT_ENTITY_COMMON_SCHEMA, MqttEntity, async_setup_entry_helper
+from .models import (
+    MqttCommandTemplate,
+    MqttValueTemplate,
+    PublishPayloadType,
+    ReceiveMessage,
+    ReceivePayloadType,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -212,7 +216,7 @@ TOPIC_KEYS = (
     CONF_TEMP_STATE_TOPIC,
 )
 
-SCHEMA_BASE = WATER_HEATER_PLATFORM_SCHEMA.extend(MQTT_BASE_PLATFORM_SCHEMA.schema)
+SCHEMA_BASE = WATER_HEATER_PLATFORM_SCHEMA.extend(MQTT_BASE_SCHEMA.schema)
 _PLATFORM_SCHEMA_BASE = SCHEMA_BASE.extend(
     {
         vol.Optional(CONF_AWAY_MODE_COMMAND_TOPIC): mqtt.valid_publish_topic,
@@ -276,23 +280,12 @@ DISCOVERY_SCHEMA = vol.All(
 )
 
 
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> None:
-    """Set up MQTT climate device through configuration.yaml."""
-    await async_setup_reload_service(hass, DOMAIN, PLATFORMS)
-    await _async_setup_entity(hass, async_add_entities, config)
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up MQTT climate device dynamically through MQTT discovery."""
+    """Set up MQTT water heater device dynamically through MQTT discovery."""
     setup = functools.partial(
         _async_setup_entity, hass, async_add_entities, config_entry=config_entry
     )
@@ -300,8 +293,12 @@ async def async_setup_entry(
 
 
 async def _async_setup_entity(
-    hass, async_add_entities, config, config_entry=None, discovery_data=None
-):
+    hass: HomeAssistant,
+    async_add_entities: AddEntitiesCallback,
+    config: ConfigType,
+    config_entry: ConfigEntry,
+    discovery_data: DiscoveryInfoType | None = None,
+) -> None:
     """Set up the MQTT climate devices."""
     async_add_entities([MqttWaterHeater(hass, config, config_entry, discovery_data)])
 
@@ -312,28 +309,42 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
     _entity_id_format = water_heater.ENTITY_ID_FORMAT
     _attributes_extra_blocked = MQTT_WATER_HEATER_ATTRIBUTES_BLOCKED
 
-    def __init__(self, hass, config, config_entry, discovery_data):
-        """Initialize the climate device."""
+    _command_templates: dict[str, Callable[[PublishPayloadType], PublishPayloadType]]
+    _value_templates: dict[str, Callable[[ReceivePayloadType], ReceivePayloadType]]
+    _topic: dict[str, Any]
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config: ConfigType,
+        config_entry: ConfigEntry,
+        discovery_data: DiscoveryInfoType | None,
+    ) -> None:
+        """Initialize the water heater device."""
         self._attr_is_away_mode_on = False
         self._attr_current_operation = None
         self._attr_current_temperature = None
         self._attr_target_temperature = None
         self._attr_target_temperature_high = None
         self._attr_target_temperature_low = None
-        self._topic = None
-        self._value_templates = None
-        self._command_templates = None
 
         MqttEntity.__init__(self, hass, config, config_entry, discovery_data)
 
     @staticmethod
-    def config_schema():
+    def config_schema() -> vol.Schema:
         """Return the config schema."""
         return DISCOVERY_SCHEMA
 
-    def _setup_from_config(self, config):
+    def _setup_from_config(self, config: ConfigType) -> None:
         """(Re)Setup the entity."""
         self._topic = {key: config.get(key) for key in TOPIC_KEYS}
+
+        self._attr_min_temp = config[CONF_TEMP_MIN]
+        self._attr_max_temp = config[CONF_TEMP_MAX]
+        self._attr_precision = config.get(CONF_PRECISION, super().precision)
+        self._attr_temperature_unit = config.get(
+            CONF_TEMPERATURE_UNIT, self.hass.config.units.temperature_unit
+        )
 
         # set to None in non-optimistic mode
         self._attr_current_operation = None
@@ -352,7 +363,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
             self._attr_current_operation = STATE_OFF
         self._attr_is_away_mode_on = False
 
-        value_templates = {}
+        value_templates: dict[str, Template | None] = {}
         for key in VALUE_TEMPLATE_KEYS:
             value_templates[key] = None
         if CONF_VALUE_TEMPLATE in config:
@@ -369,20 +380,28 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
             for key, template in value_templates.items()
         }
 
-        command_templates = {}
+        self._command_templates = {}
         for key in COMMAND_TEMPLATE_KEYS:
-            command_templates[key] = MqttCommandTemplate(
+            self._command_templates[key] = MqttCommandTemplate(
                 config.get(key), entity=self
             ).async_render
 
-        self._command_templates = command_templates
+        support = WaterHeaterEntityFeature(0)
+        if (self._topic[CONF_TEMP_STATE_TOPIC] is not None) or (
+            self._topic[CONF_TEMP_COMMAND_TOPIC] is not None
+        ):
+            support |= WaterHeaterEntityFeature.TARGET_TEMPERATURE
 
-    def _prepare_subscribe_topics(self):
+    def _prepare_subscribe_topics(self) -> None:
         """(Re)Subscribe to topics."""
-        topics = {}
-        qos = self._config[CONF_QOS]
+        topics: dict[str, dict[str, Any]] = {}
+        qos: int = self._config[CONF_QOS]
 
-        def add_subscription(topics, topic, msg_callback):
+        def add_subscription(
+            topics: dict[str, dict[str, Any]],
+            topic: str,
+            msg_callback: Callable[[ReceiveMessage], None],
+        ) -> None:
             if self._topic[topic] is not None:
                 topics[topic] = {
                     "topic": self._topic[topic],
@@ -391,12 +410,16 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
                     "encoding": self._config[CONF_ENCODING] or None,
                 }
 
-        def render_template(msg, template_name):
+        def render_template(
+            msg: ReceiveMessage, template_name: str
+        ) -> ReceivePayloadType:
             template = self._value_templates[template_name]
             return template(msg.payload)
 
         @callback
-        def handle_temperature_received(msg, template_name, attr):
+        def handle_temperature_received(
+            msg: ReceiveMessage, template_name: str, attr: str
+        ) -> None:
             """Handle temperature coming via MQTT."""
             payload = render_template(msg, template_name)
 
@@ -408,7 +431,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
 
         @callback
         @log_messages(self.hass, self.entity_id)
-        def handle_current_temperature_received(msg):
+        def handle_current_temperature_received(msg: ReceiveMessage) -> None:
             """Handle current temperature coming via MQTT."""
             handle_temperature_received(
                 msg, CONF_CURRENT_TEMP_TEMPLATE, "_attr_current_temperature"
@@ -420,7 +443,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
 
         @callback
         @log_messages(self.hass, self.entity_id)
-        def handle_target_temperature_received(msg):
+        def handle_target_temperature_received(msg: ReceiveMessage) -> None:
             """Handle target temperature coming via MQTT."""
             handle_temperature_received(
                 msg, CONF_TEMP_STATE_TEMPLATE, "_attr_target_temperature"
@@ -432,7 +455,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
 
         @callback
         @log_messages(self.hass, self.entity_id)
-        def handle_temperature_low_received(msg):
+        def handle_temperature_low_received(msg: ReceiveMessage) -> None:
             """Handle target temperature low coming via MQTT."""
             handle_temperature_received(
                 msg, CONF_TEMP_LOW_STATE_TEMPLATE, "_attr_target_temperature_low"
@@ -444,7 +467,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
 
         @callback
         @log_messages(self.hass, self.entity_id)
-        def handle_temperature_high_received(msg):
+        def handle_temperature_high_received(msg: ReceiveMessage) -> None:
             """Handle target temperature high coming via MQTT."""
             handle_temperature_received(
                 msg, CONF_TEMP_HIGH_STATE_TEMPLATE, "_attr_target_temperature_high"
@@ -455,7 +478,9 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         )
 
         @callback
-        def handle_mode_received(msg, template_name, attr, mode_list):
+        def handle_mode_received(
+            msg: ReceiveMessage, template_name: str, attr: str, mode_list: str
+        ) -> None:
             """Handle receiving listed mode via MQTT."""
             payload = render_template(msg, template_name)
 
@@ -467,7 +492,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
 
         @callback
         @log_messages(self.hass, self.entity_id)
-        def handle_current_mode_received(msg):
+        def handle_current_mode_received(msg: ReceiveMessage) -> None:
             """Handle receiving mode via MQTT."""
             handle_mode_received(
                 msg, CONF_MODE_STATE_TEMPLATE, "_attr_current_operation", CONF_MODE_LIST
@@ -476,7 +501,9 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         add_subscription(topics, CONF_MODE_STATE_TOPIC, handle_current_mode_received)
 
         @callback
-        def handle_onoff_mode_received(msg, template_name, attr):
+        def handle_onoff_mode_received(
+            msg: ReceiveMessage, template_name: str, attr: str
+        ) -> None:
             """Handle receiving on/off mode via MQTT."""
             payload = render_template(msg, template_name)
             payload_on = self._config[CONF_PAYLOAD_ON]
@@ -498,7 +525,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
 
         @callback
         @log_messages(self.hass, self.entity_id)
-        def handle_away_mode_received(msg):
+        def handle_away_mode_received(msg: ReceiveMessage) -> None:
             """Handle receiving away mode via MQTT."""
             handle_onoff_mode_received(
                 msg, CONF_AWAY_MODE_STATE_TEMPLATE, "_attr_is_away_mode_on"
@@ -510,38 +537,38 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
             self.hass, self._sub_state, topics
         )
 
-    async def _subscribe_topics(self):
+    async def _subscribe_topics(self) -> None:
         """(Re)Subscribe to topics."""
         await subscription.async_subscribe_topics(self.hass, self._sub_state)
 
-    @property
-    def temperature_unit(self):
-        """Return the unit of measurement."""
-        if self._config.get(CONF_TEMPERATURE_UNIT):
-            return self._config.get(CONF_TEMPERATURE_UNIT)
-        return self.hass.config.units.temperature_unit
+    # @property
+    # def temperature_unit(self):
+    #     """Return the unit of measurement."""
+    #     if self._config.get(CONF_TEMPERATURE_UNIT):
+    #         return self._config.get(CONF_TEMPERATURE_UNIT)
+    #     return self.hass.config.units.temperature_unit
 
-    @property
-    def current_temperature(self):
-        """Return the current temperature."""
-        return self._attr_current_temperature
+    # @property
+    # def current_temperature(self):
+    #     """Return the current temperature."""
+    #     return self._attr_current_temperature
 
-    @property
-    def target_temperature(self):
-        """Return the temperature we try to reach."""
-        return self._attr_target_temperature
+    # @property
+    # def target_temperature(self):
+    #     """Return the temperature we try to reach."""
+    #     return self._attr_target_temperature
 
-    @property
-    def target_temperature_low(self):
-        """Return the low target temperature we try to reach."""
-        return self._attr_target_temperature_low
+    # @property
+    # def target_temperature_low(self):
+    #     """Return the low target temperature we try to reach."""
+    #     return self._attr_target_temperature_low
 
-    @property
-    def target_temperature_high(self):
-        """Return the high target temperature we try to reach."""
-        return self._attr_target_temperature_high
+    # @property
+    # def target_temperature_high(self):
+    #     """Return the high target temperature we try to reach."""
+    #     return self._attr_target_temperature_high
 
-    async def _publish(self, topic, payload):
+    async def _publish(self, topic: str, payload: PublishPayloadType) -> None:
         if self._topic[topic] is not None:
             await mqtt.async_publish(
                 self.hass,
@@ -553,8 +580,13 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
             )
 
     async def _set_temperature(
-        self, temp, cmnd_topic, cmnd_template, state_topic, attr
-    ):
+        self,
+        temp: float | None,
+        cmnd_topic: str,
+        cmnd_template: str,
+        state_topic: str,
+        attr: str,
+    ) -> None:
         if temp is not None:
             if self._topic[state_topic] is None:
                 # optimistic mode
@@ -563,7 +595,7 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
             payload = self._command_templates[cmnd_template](temp)
             await self._publish(cmnd_topic, payload)
 
-    async def async_set_temperature(self, **kwargs):
+    async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperatures."""
         # if kwargs.get(ATTR_HVAC_MODE) is not None:
         #     operation_mode = kwargs.get(ATTR_HVAC_MODE)
@@ -596,7 +628,8 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         # Always optimistic?
         self.async_write_ha_state()
 
-    async def async_set_operation_mode(self, operation_mode) -> None:
+    # @TODO FIND PROPER WAY OF TYPING OPERATION MODE
+    async def async_set_operation_mode(self, operation_mode: str) -> None:
         """Set new operation mode."""
         if operation_mode == STATE_OFF:
             await self._publish(
@@ -611,48 +644,3 @@ class MqttWaterHeater(MqttEntity, WaterHeaterEntity):
         if self._topic[CONF_MODE_STATE_TOPIC] is None:
             self._attr_current_operation = operation_mode
             self.async_write_ha_state()
-
-    async def _set_away_mode(self, state):
-        """Set away mode.
-
-        Returns if we should optimistically write the state.
-        """
-        await self._publish(
-            CONF_AWAY_MODE_COMMAND_TOPIC,
-            self._config[CONF_PAYLOAD_ON] if state else self._config[CONF_PAYLOAD_OFF],
-        )
-
-        if self._topic[CONF_AWAY_MODE_STATE_TOPIC] is not None:
-            return False
-
-        self._attr_is_away_mode_on = state
-        return True
-
-    @property
-    def supported_features(self):
-        """Return the list of supported features."""
-        support = 0
-
-        if (self._topic[CONF_TEMP_STATE_TOPIC] is not None) or (
-            self._topic[CONF_TEMP_COMMAND_TOPIC] is not None
-        ):
-            support |= SUPPORT_TARGET_TEMPERATURE
-
-        return support
-
-    @property
-    def min_temp(self):
-        """Return the minimum temperature."""
-        return self._config[CONF_TEMP_MIN]
-
-    @property
-    def max_temp(self):
-        """Return the maximum temperature."""
-        return self._config[CONF_TEMP_MAX]
-
-    @property
-    def precision(self):
-        """Return the precision of the system."""
-        if self._config.get(CONF_PRECISION) is not None:
-            return self._config.get(CONF_PRECISION)
-        return super().precision
