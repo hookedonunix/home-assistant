@@ -75,8 +75,6 @@ from .util import get_mqtt_data, valid_publish_topic, valid_subscribe_topic
 
 _LOGGER = logging.getLogger(__name__)
 
-_LOGGER.critical("WHAT THE FUCK IS UP YOU BITCH")
-
 DEFAULT_NAME = "MQTT HVAC"
 
 CONF_ACTION_TEMPLATE = "action_template"
