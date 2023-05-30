@@ -239,7 +239,9 @@ async def test_set_operation_optimistic(
 
 @pytest.mark.parametrize("hass_config", [DEFAULT_CONFIG])
 async def test_set_target_temperature(
-    hass: HomeAssistant, mqtt_mock_entry: MqttMockHAClientGenerator
+    hass: HomeAssistant,
+    mqtt_mock_entry: MqttMockHAClientGenerator,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test setting the target temperature."""
     mqtt_mock = await mqtt_mock_entry()
@@ -358,13 +360,23 @@ async def test_set_target_temperature_optimistic(
     ],
 )
 async def test_receive_mqtt_temperature(
-    hass: HomeAssistant, mqtt_mock_entry: MqttMockHAClientGenerator
+    hass: HomeAssistant,
+    mqtt_mock_entry: MqttMockHAClientGenerator,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test getting the current temperature via MQTT."""
     await mqtt_mock_entry()
 
     async_fire_mqtt_message(hass, "current_temperature", "108")
     state = hass.states.get(ENTITY_WATER_HEATER)
+    assert state.attributes.get("current_temperature") == 108
+
+    async_fire_mqtt_message(hass, "current_temperature", "")
+    state = hass.states.get(ENTITY_WATER_HEATER)
+    assert (
+        "Invalid empty payload for attribute _attr_current_temperature, ignoring update"
+        in caplog.text
+    )
     assert state.attributes.get("current_temperature") == 108
 
 
