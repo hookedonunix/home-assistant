@@ -827,9 +827,7 @@ class TemperatureControlTrait(_Trait):
 
     name = TRAIT_TEMPERATURE_CONTROL
 
-    commands = [
-        COMMAND_SET_TEMPERATURE,
-    ]
+    commands = [COMMAND_SET_TEMPERATURE]
 
     @staticmethod
     def supported(domain, features, device_class, _):
